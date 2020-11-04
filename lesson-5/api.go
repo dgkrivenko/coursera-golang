@@ -76,15 +76,15 @@ type NewUser struct {
 }
 
 // apigen:api {"url": "/user/profile", "auth": false}
-func (srv *MyApi) Profile(ctx context.Context, in ProfileParams) (*User, error) {
+func (h *MyApi) Profile(ctx context.Context, in ProfileParams) (*User, error) {
 
 	if in.Login == "bad_user" {
 		return nil, fmt.Errorf("bad user")
 	}
 
-	srv.mu.RLock()
-	user, exist := srv.users[in.Login]
-	srv.mu.RUnlock()
+	h.mu.RLock()
+	user, exist := h.users[in.Login]
+	h.mu.RUnlock()
 	if !exist {
 		return nil, ApiError{http.StatusNotFound, fmt.Errorf("user not exist")}
 	}
@@ -93,26 +93,26 @@ func (srv *MyApi) Profile(ctx context.Context, in ProfileParams) (*User, error) 
 }
 
 // apigen:api {"url": "/user/create", "auth": true, "method": "POST"}
-func (srv *MyApi) Create(ctx context.Context, in CreateParams) (*NewUser, error) {
+func (h *MyApi) Create(ctx context.Context, in CreateParams) (*NewUser, error) {
 	if in.Login == "bad_username" {
 		return nil, fmt.Errorf("bad user")
 	}
 
-	srv.mu.Lock()
-	defer srv.mu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-	_, exist := srv.users[in.Login]
+	_, exist := h.users[in.Login]
 	if exist {
 		return nil, ApiError{http.StatusConflict, fmt.Errorf("user %s exist", in.Login)}
 	}
 
-	id := srv.nextID
-	srv.nextID++
-	srv.users[in.Login] = &User{
+	id := h.nextID
+	h.nextID++
+	h.users[in.Login] = &User{
 		ID:       id,
 		Login:    in.Login,
 		FullName: in.Name,
-		Status:   srv.statuses[in.Status],
+		Status:   h.statuses[in.Status],
 	}
 
 	return &NewUser{id}, nil
@@ -145,7 +145,7 @@ type OtherUser struct {
 }
 
 // apigen:api {"url": "/user/create", "auth": true, "method": "POST"}
-func (srv *OtherApi) Create(ctx context.Context, in OtherCreateParams) (*OtherUser, error) {
+func (h *OtherApi) Create(ctx context.Context, in OtherCreateParams) (*OtherUser, error) {
 	return &OtherUser{
 		ID:       12,
 		Login:    in.Username,

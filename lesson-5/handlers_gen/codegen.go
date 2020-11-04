@@ -32,36 +32,50 @@ type serveHTTPTemplateData struct {
 	Router     string
 }
 
-// TODO вернуться в конце
-//func createServeHttp(fd *ast.FuncDecl) string {
-//	st, ok1 := fd.Recv.List[0].Type.(*ast.StarExpr)
-//	if ok1 {
-//		nodeType, ok2 := st.X.(*ast.Ident)
-//		if ok2 {
-//			if _, exist := serveHTTPCreated[nodeType.Name]; exist {
-//				return ""
-//			}
-//		}
-//	}
-//}
+type wrapperTemplateData struct {
+	ReceiverType string
+	ParamsType   string
+	FuncName     string
+}
 
-//func createWrapper(fd *ast.FuncDecl, config *HandlerConfig) (string, error) {
-//
-//}
-
-func createRoute(fd *ast.FuncDecl, config *HandlerConfig) error {
+func getReceiverType(fd *ast.FuncDecl) string {
 	st, ok1 := fd.Recv.List[0].Type.(*ast.StarExpr)
 	if ok1 {
 		nodeType, ok2 := st.X.(*ast.Ident)
 		if ok2 {
-			var tmp bytes.Buffer
-			err := routeTpl.Execute(&tmp, routeTemplateData{config.URL, fd.Name.Name})
-			if err != nil {
-				return err
-			}
-			serveHTTPRoutes[nodeType.Name] += tmp.String()
+			return nodeType.Name
 		}
 	}
+	return ""
+}
+
+func getParamType(fd *ast.FuncDecl) string {
+	i, ok := fd.Type.Params.List[1].Type.(*ast.Ident)
+	if ok {
+		return i.Name
+	}
+	return ""
+}
+
+func createWrapper(fd *ast.FuncDecl, config *HandlerConfig) (string, error) {
+	rt := getReceiverType(fd)
+	pt := getParamType(fd)
+	var tmp bytes.Buffer
+	err := wrapperTpl.Execute(&tmp, wrapperTemplateData{rt, pt, fd.Name.Name})
+	if err != nil {
+		return "", err
+	}
+	return tmp.String(), nil
+}
+
+func createRoute(fd *ast.FuncDecl, config *HandlerConfig) error {
+	typeName := getReceiverType(fd)
+	var tmp bytes.Buffer
+	err := routeTpl.Execute(&tmp, routeTemplateData{config.URL, fd.Name.Name})
+	if err != nil {
+		return err
+	}
+	serveHTTPRoutes[typeName] += tmp.String()
 	return nil
 }
 
@@ -74,6 +88,7 @@ func main() {
 
 	out, _ := os.Create(os.Args[2])
 	fmt.Fprintln(out, "package "+node.Name.Name+"\n")
+	fmt.Fprintf(out, importStr)
 
 	for _, d := range node.Decls {
 		fd, ok := d.(*ast.FuncDecl)
@@ -91,11 +106,11 @@ func main() {
 					log.Fatal(err)
 				}
 
-				//wrapper, err := createWrapper(fd, config)
-				//if err != nil {
-				//	log.Fatal(err)
-				//}
-				//fmt.Fprintln(out, wrapper)
+				wrapper, err := createWrapper(fd, config)
+				if err != nil {
+					log.Fatal(err)
+				}
+				fmt.Fprintln(out, wrapper)
 
 				err = createRoute(fd, config)
 				if err != nil {
