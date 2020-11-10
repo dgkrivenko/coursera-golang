@@ -6,8 +6,10 @@ import (
 
 const importStr = `import (
 	"encoding/json"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 `
@@ -46,12 +48,14 @@ func (h *{{.ReceiverType}}) wrapper{{.FuncName}}(w http.ResponseWriter, r *http.
 	res, err := h.{{.FuncName}}(r.Context(), params)
 	if err != nil {
 		if apiError, ok := err.(ApiError); ok {
-			resp := map[string]string{"error": apiError.Err.Error()}
-			respBody, err = json.Marshal(resp)
-			if err != nil {
-				log.Fatal(err)
-			}
 			w.WriteHeader(apiError.HTTPStatus)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		resp := map[string]string{"error": err.Error()}
+		respBody, err = json.Marshal(resp)
+		if err != nil {
+			log.Fatal(err)
 		}
 	} else {
 		response := map[string]interface{}{
@@ -91,9 +95,10 @@ func (h *{{.ReceiverType}}) wrapper{{.FuncName}}(w http.ResponseWriter, r *http.
 	in.{{.FieldName}} = val{{.FieldName}}
 `))
 	strTpl = template.Must(template.New("strTpl").Parse(`
+	
 	// {{.FieldName}} unpack
 	var val{{.FieldName}} string
-	keys{{.FieldName}}, ok := r.URL.Query()[{{.QueryName}}]
+	keys{{.FieldName}}, ok := values[{{.QueryName}}]
 	if !ok || len(keys{{.FieldName}}[0]) < 1{
 		val{{.FieldName}} = {{.DefaultVal}}
 	} else {
@@ -130,4 +135,19 @@ func (h *{{.ReceiverType}}) wrapper{{.FuncName}}(w http.ResponseWriter, r *http.
 		}
 		return
 	}`
+
+	unpackBaseTemplate = template.Must(template.New("unpackBaseTemplate").Parse(`func (in *{{.TypeName}}) Unpack(r *http.Request) error {
+	var values url.Values
+	if r.Method == http.MethodGet {
+		values = r.URL.Query()
+	} else {
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		values, err = url.ParseQuery(string(body))
+		if err != nil {
+			log.Fatal(err)
+		}
+	}`))
 	)

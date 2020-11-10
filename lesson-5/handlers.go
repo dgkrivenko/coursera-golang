@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -19,12 +21,14 @@ func (h *MyApi) wrapperProfile(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Profile(r.Context(), params)
 	if err != nil {
 		if apiError, ok := err.(ApiError); ok {
-			resp := map[string]string{"error": apiError.Err.Error()}
-			respBody, err = json.Marshal(resp)
-			if err != nil {
-				log.Fatal(err)
-			}
 			w.WriteHeader(apiError.HTTPStatus)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		resp := map[string]string{"error": err.Error()}
+		respBody, err = json.Marshal(resp)
+		if err != nil {
+			log.Fatal(err)
 		}
 	} else {
 		response := map[string]interface{}{
@@ -45,10 +49,23 @@ func (h *MyApi) wrapperProfile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (in *ProfileParams) Unpack(r *http.Request) error {
-
+	var values url.Values
+	if r.Method == http.MethodGet {
+		values = r.URL.Query()
+	} else {
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		values, err = url.ParseQuery(string(body))
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	
 	// Login unpack
 	var valLogin string
-	keysLogin, ok := r.URL.Query()["login"]
+	keysLogin, ok := values["login"]
 	if !ok || len(keysLogin[0]) < 1{
 		valLogin = ""
 	} else {
@@ -98,12 +115,14 @@ func (h *MyApi) wrapperCreate(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Create(r.Context(), params)
 	if err != nil {
 		if apiError, ok := err.(ApiError); ok {
-			resp := map[string]string{"error": apiError.Err.Error()}
-			respBody, err = json.Marshal(resp)
-			if err != nil {
-				log.Fatal(err)
-			}
 			w.WriteHeader(apiError.HTTPStatus)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		resp := map[string]string{"error": err.Error()}
+		respBody, err = json.Marshal(resp)
+		if err != nil {
+			log.Fatal(err)
 		}
 	} else {
 		response := map[string]interface{}{
@@ -124,10 +143,23 @@ func (h *MyApi) wrapperCreate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (in *CreateParams) Unpack(r *http.Request) error {
-
+	var values url.Values
+	if r.Method == http.MethodGet {
+		values = r.URL.Query()
+	} else {
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		values, err = url.ParseQuery(string(body))
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	
 	// Login unpack
 	var valLogin string
-	keysLogin, ok := r.URL.Query()["login"]
+	keysLogin, ok := values["login"]
 	if !ok || len(keysLogin[0]) < 1{
 		valLogin = ""
 	} else {
@@ -135,9 +167,10 @@ func (in *CreateParams) Unpack(r *http.Request) error {
 	}
 	in.Login = valLogin
 
+	
 	// Name unpack
 	var valName string
-	keysName, ok := r.URL.Query()["full_name"]
+	keysName, ok := values["full_name"]
 	if !ok || len(keysName[0]) < 1{
 		valName = ""
 	} else {
@@ -145,9 +178,10 @@ func (in *CreateParams) Unpack(r *http.Request) error {
 	}
 	in.Name = valName
 
+	
 	// Status unpack
 	var valStatus string
-	keysStatus, ok := r.URL.Query()["status"]
+	keysStatus, ok := values["status"]
 	if !ok || len(keysStatus[0]) < 1{
 		valStatus = "user"
 	} else {
@@ -210,12 +244,14 @@ func (h *OtherApi) wrapperCreate(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Create(r.Context(), params)
 	if err != nil {
 		if apiError, ok := err.(ApiError); ok {
-			resp := map[string]string{"error": apiError.Err.Error()}
-			respBody, err = json.Marshal(resp)
-			if err != nil {
-				log.Fatal(err)
-			}
 			w.WriteHeader(apiError.HTTPStatus)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		resp := map[string]string{"error": err.Error()}
+		respBody, err = json.Marshal(resp)
+		if err != nil {
+			log.Fatal(err)
 		}
 	} else {
 		response := map[string]interface{}{
@@ -236,10 +272,23 @@ func (h *OtherApi) wrapperCreate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (in *OtherCreateParams) Unpack(r *http.Request) error {
-
+	var values url.Values
+	if r.Method == http.MethodGet {
+		values = r.URL.Query()
+	} else {
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		values, err = url.ParseQuery(string(body))
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	
 	// Username unpack
 	var valUsername string
-	keysUsername, ok := r.URL.Query()["username"]
+	keysUsername, ok := values["username"]
 	if !ok || len(keysUsername[0]) < 1{
 		valUsername = ""
 	} else {
@@ -247,9 +296,10 @@ func (in *OtherCreateParams) Unpack(r *http.Request) error {
 	}
 	in.Username = valUsername
 
+	
 	// Name unpack
 	var valName string
-	keysName, ok := r.URL.Query()["account_name"]
+	keysName, ok := values["account_name"]
 	if !ok || len(keysName[0]) < 1{
 		valName = ""
 	} else {
@@ -257,9 +307,10 @@ func (in *OtherCreateParams) Unpack(r *http.Request) error {
 	}
 	in.Name = valName
 
+	
 	// Class unpack
 	var valClass string
-	keysClass, ok := r.URL.Query()["class"]
+	keysClass, ok := values["class"]
 	if !ok || len(keysClass[0]) < 1{
 		valClass = "warrior"
 	} else {

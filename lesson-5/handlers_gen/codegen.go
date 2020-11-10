@@ -41,6 +41,10 @@ type wrapperTemplateData struct {
 	AuthCheck    string
 }
 
+type unpackBaseData struct {
+	TypeName string
+}
+
 type unpackData struct {
 	QueryName  string
 	FieldName  string
@@ -189,7 +193,12 @@ func createParamMethod(node *ast.File, typeName string) (string, error) {
 			}
 
 			// Init unpack function
-			unpackCode += "func (in *" + currType.Name.Name + ") Unpack(r *http.Request) error {\n"
+			var tmp bytes.Buffer
+			err := unpackBaseTemplate.Execute(&tmp, unpackBaseData{TypeName: currType.Name.Name})
+			if err != nil {
+				log.Fatal(err)
+			}
+			unpackCode = tmp.String()
 
 			for _, field := range currStruct.Fields.List {
 				if field.Tag != nil {
