@@ -41,7 +41,7 @@ type wrapperTemplateData struct {
 	AuthCheck    string
 }
 
-type unpackBaseData struct {
+type typeNameData struct {
 	TypeName string
 }
 
@@ -124,9 +124,9 @@ func parseStructTag(tag string) map[string]string {
 // getQueryName - get name of query parameter from struct tag
 func getQueryName(options map[string]string, fieldName string) string {
 	if queryName, ok := options["paramname"]; ok {
-		return fmt.Sprintf(`"%s"`, queryName)
+		return fmt.Sprintf(`%s`, queryName)
 	}
-	return fmt.Sprintf(`"%s"`, strings.ToLower(fieldName))
+	return fmt.Sprintf(`%s`, strings.ToLower(fieldName))
 }
 
 // getDefaultValue - get default value from struct tag
@@ -147,13 +147,13 @@ func getDefaultValue(options map[string]string, typeName string) string {
 // createUnpackCode - create unpack code for field
 func createUnpackCode(field *ast.Field, options map[string]string) (string, error) {
 	fieldName := field.Names[0].Name
-	fileType := field.Type.(*ast.Ident).Name
+	fieldType := field.Type.(*ast.Ident).Name
 	var tmp bytes.Buffer
 	data := unpackData{
 		QueryName: getQueryName(options, fieldName),
 		FieldName: fieldName,
 	}
-	switch fileType {
+	switch fieldType {
 	case "int":
 		data.DefaultVal = getDefaultValue(options, "int")
 		err := intTpl.Execute(&tmp, data)
@@ -169,13 +169,50 @@ func createUnpackCode(field *ast.Field, options map[string]string) (string, erro
 		}
 		return tmp.String(), nil
 	default:
-		return "", fmt.Errorf("unsupported, %+v", fileType)
+		return "", fmt.Errorf("unsupported, %+v", fieldType)
 	}
 }
 
+// createUnpackCode - create unpack code for field
+func createValidateCode(field *ast.Field, options map[string]string) string {
+	var code string
+	fieldName := field.Names[0].Name
+	filedType := field.Type.(*ast.Ident).Name
+	queryName := getQueryName(options, fieldName)
+
+	if _, ok := options["required"]; ok {
+		if filedType == "int" {
+			code += fmt.Sprintf(requiredTemplateInt, fieldName, queryName)
+		} else if filedType == "string" {
+			code += fmt.Sprintf(requiredTemplateString, fieldName, queryName)
+		}
+	}
+
+	if min, ok := options["min"]; ok {
+		if filedType == "int" {
+			code += fmt.Sprintf(minTemplateInt, fieldName, min, queryName, min)
+		} else if filedType == "string" {
+			code += fmt.Sprintf(minTemplateString, fieldName, min, queryName, min)
+		}
+	}
+
+	if max, ok := options["max"]; ok {
+		code += fmt.Sprintf(maxTemplate, fieldName, max, queryName, max)
+	}
+
+	if enumString, ok := options["enum"]; ok {
+		enum := strings.Split(enumString, "|")
+		param :=fmt.Sprintf( "[]%s{\"", filedType) + strings.Join(enum, "\",\"") + "\"}"
+		code += fmt.Sprintf(checkEnumTemplate, param, fieldName, queryName)
+	}
+
+	return code
+}
+
 // createParamMethod - create Unpack and Validate methods for handler params
-func createParamMethod(node *ast.File, typeName string) (string, error) {
+func createParamMethod(node *ast.File, typeName string) (string, string, error) {
 	var unpackCode string
+	var validateCode string
 	for _, f := range node.Decls {
 		g, ok := f.(*ast.GenDecl)
 		if !ok { // Ignore not *ast.GenDecl items
@@ -194,11 +231,19 @@ func createParamMethod(node *ast.File, typeName string) (string, error) {
 
 			// Init unpack function
 			var tmp bytes.Buffer
-			err := unpackBaseTemplate.Execute(&tmp, unpackBaseData{TypeName: currType.Name.Name})
+			err := unpackBaseTemplate.Execute(&tmp, typeNameData{TypeName: currType.Name.Name})
 			if err != nil {
 				log.Fatal(err)
 			}
 			unpackCode = tmp.String()
+
+			// Init validate function
+			tmp.Reset()
+			err = validateTpl.Execute(&tmp, typeNameData{TypeName: currType.Name.Name})
+			if err != nil {
+				log.Fatal(err)
+			}
+			validateCode = tmp.String()
 
 			for _, field := range currStruct.Fields.List {
 				if field.Tag != nil {
@@ -212,12 +257,16 @@ func createParamMethod(node *ast.File, typeName string) (string, error) {
 						log.Fatal(err)
 					}
 					unpackCode += unpack
+
+					// Create validate code
+					validateCode += createValidateCode(field, tagOptions)
 				}
 			}
 			unpackCode += "\treturn nil\n}\n"
+			validateCode += "\treturn nil\n}\n"
 		}
 	}
-	return unpackCode, nil
+	return unpackCode, validateCode, nil
 }
 
 func main() {
@@ -230,6 +279,7 @@ func main() {
 	out, _ := os.Create(os.Args[2])
 	fmt.Fprintln(out, "package "+node.Name.Name+"\n")
 	fmt.Fprintf(out, importStr)
+	fmt.Fprintf(out, checkEnumFunc)
 
 	for _, d := range node.Decls {
 		fd, ok := d.(*ast.FuncDecl)
@@ -255,11 +305,12 @@ func main() {
 					if err != nil {
 						log.Fatal(err)
 					}
-					code, err := createParamMethod(node, getParamType(fd))
+					unpackCode, validateCode, err := createParamMethod(node, getParamType(fd))
 					if err != nil {
 						log.Fatal(err)
 					}
-					fmt.Fprintln(out, code)
+					fmt.Fprintln(out, unpackCode)
+					fmt.Fprintln(out, validateCode)
 				}
 			}
 		}

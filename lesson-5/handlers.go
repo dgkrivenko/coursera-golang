@@ -2,13 +2,22 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
-
+func checkEnum(enum []string, value string) bool {
+	for _, v := range enum {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
 func (h *MyApi) wrapperProfile(w http.ResponseWriter, r *http.Request) {
 	
 	
@@ -16,32 +25,52 @@ func (h *MyApi) wrapperProfile(w http.ResponseWriter, r *http.Request) {
 	params := ProfileParams{}
 	err := params.Unpack(r)
 	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := h.Profile(r.Context(), params)
-	if err != nil {
-		if apiError, ok := err.(ApiError); ok {
-			w.WriteHeader(apiError.HTTPStatus)
-		} else {
-			w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
+		resp := map[string]string{"error": err.Error()}
+		respBody, err = json.Marshal(resp)
+		if err != nil {
+			log.Fatal(err)
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err = w.Write(respBody)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	err = params.Validate()
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
 		resp := map[string]string{"error": err.Error()}
 		respBody, err = json.Marshal(resp)
 		if err != nil {
 			log.Fatal(err)
 		}
 	} else {
-		response := map[string]interface{}{
-			"error": "",
-			"response": res,
-		}
-		respBody, err = json.Marshal(response)
+		res, err := h.Profile(r.Context(), params)
 		if err != nil {
-			log.Fatal(err)
+			if apiError, ok := err.(ApiError); ok {
+				w.WriteHeader(apiError.HTTPStatus)
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+			resp := map[string]string{"error": err.Error()}
+			respBody, err = json.Marshal(resp)
+			if err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			response := map[string]interface{}{
+				"error": "",
+				"response": res,
+			}
+			respBody, err = json.Marshal(response)
+			if err != nil {
+				log.Fatal(err)
+			}
+			w.WriteHeader(http.StatusOK)
 		}
-		w.WriteHeader(http.StatusOK)
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	_, err = w.Write(respBody)
 	if err != nil {
@@ -72,6 +101,11 @@ func (in *ProfileParams) Unpack(r *http.Request) error {
 		valLogin = keysLogin[0]
 	}
 	in.Login = valLogin
+	return nil
+}
+
+func (in ProfileParams) Validate() error {
+	if in.Login == "" { return fmt.Errorf("login must me not empty")}
 	return nil
 }
 
@@ -110,32 +144,52 @@ func (h *MyApi) wrapperCreate(w http.ResponseWriter, r *http.Request) {
 	params := CreateParams{}
 	err := params.Unpack(r)
 	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := h.Create(r.Context(), params)
-	if err != nil {
-		if apiError, ok := err.(ApiError); ok {
-			w.WriteHeader(apiError.HTTPStatus)
-		} else {
-			w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
+		resp := map[string]string{"error": err.Error()}
+		respBody, err = json.Marshal(resp)
+		if err != nil {
+			log.Fatal(err)
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err = w.Write(respBody)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	err = params.Validate()
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
 		resp := map[string]string{"error": err.Error()}
 		respBody, err = json.Marshal(resp)
 		if err != nil {
 			log.Fatal(err)
 		}
 	} else {
-		response := map[string]interface{}{
-			"error": "",
-			"response": res,
-		}
-		respBody, err = json.Marshal(response)
+		res, err := h.Create(r.Context(), params)
 		if err != nil {
-			log.Fatal(err)
+			if apiError, ok := err.(ApiError); ok {
+				w.WriteHeader(apiError.HTTPStatus)
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+			resp := map[string]string{"error": err.Error()}
+			respBody, err = json.Marshal(resp)
+			if err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			response := map[string]interface{}{
+				"error": "",
+				"response": res,
+			}
+			respBody, err = json.Marshal(response)
+			if err != nil {
+				log.Fatal(err)
+			}
+			w.WriteHeader(http.StatusOK)
 		}
-		w.WriteHeader(http.StatusOK)
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	_, err = w.Write(respBody)
 	if err != nil {
@@ -191,16 +245,33 @@ func (in *CreateParams) Unpack(r *http.Request) error {
 
 	// Age unpack
 	var valAge int
-	keysAge, ok := r.URL.Query()["age"]
+	var err error
+	keysAge, ok := values["age"]
 	if !ok || len(keysAge[0]) < 1{
 		valAge = 0
 	} else {
-		valAge, _ = strconv.Atoi(keysAge[0])
+		valAge, err = strconv.Atoi(keysAge[0])
+		if err != nil {
+			return fmt.Errorf("age must be int")
+		}
 		if valAge == 0 {
 			valAge = 0
 		}
 	}
 	in.Age = valAge
+	return nil
+}
+
+func (in CreateParams) Validate() error {
+	if in.Login == "" { return fmt.Errorf("login must me not empty")}
+	if len(in.Login) < 10 { return fmt.Errorf("login len must me >= 10")}
+	enumValues := []string{"user","moderator","admin"}
+	if !checkEnum(enumValues, in.Status) {
+		errorMsg := "status must be one of " + "[" + strings.Join(enumValues, ", ") + "]"
+		return fmt.Errorf(errorMsg)
+	}
+	if in.Age < 0 { return fmt.Errorf("age must be >= 0")}
+	if in.Age > 128 { return fmt.Errorf("age must be <= 128")}
 	return nil
 }
 
@@ -239,32 +310,52 @@ func (h *OtherApi) wrapperCreate(w http.ResponseWriter, r *http.Request) {
 	params := OtherCreateParams{}
 	err := params.Unpack(r)
 	if err != nil {
-		log.Fatal(err)
-	}
-	res, err := h.Create(r.Context(), params)
-	if err != nil {
-		if apiError, ok := err.(ApiError); ok {
-			w.WriteHeader(apiError.HTTPStatus)
-		} else {
-			w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
+		resp := map[string]string{"error": err.Error()}
+		respBody, err = json.Marshal(resp)
+		if err != nil {
+			log.Fatal(err)
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err = w.Write(respBody)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	err = params.Validate()
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
 		resp := map[string]string{"error": err.Error()}
 		respBody, err = json.Marshal(resp)
 		if err != nil {
 			log.Fatal(err)
 		}
 	} else {
-		response := map[string]interface{}{
-			"error": "",
-			"response": res,
-		}
-		respBody, err = json.Marshal(response)
+		res, err := h.Create(r.Context(), params)
 		if err != nil {
-			log.Fatal(err)
+			if apiError, ok := err.(ApiError); ok {
+				w.WriteHeader(apiError.HTTPStatus)
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+			resp := map[string]string{"error": err.Error()}
+			respBody, err = json.Marshal(resp)
+			if err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			response := map[string]interface{}{
+				"error": "",
+				"response": res,
+			}
+			respBody, err = json.Marshal(response)
+			if err != nil {
+				log.Fatal(err)
+			}
+			w.WriteHeader(http.StatusOK)
 		}
-		w.WriteHeader(http.StatusOK)
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	_, err = w.Write(respBody)
 	if err != nil {
@@ -320,16 +411,33 @@ func (in *OtherCreateParams) Unpack(r *http.Request) error {
 
 	// Level unpack
 	var valLevel int
-	keysLevel, ok := r.URL.Query()["level"]
+	var err error
+	keysLevel, ok := values["level"]
 	if !ok || len(keysLevel[0]) < 1{
 		valLevel = 0
 	} else {
-		valLevel, _ = strconv.Atoi(keysLevel[0])
+		valLevel, err = strconv.Atoi(keysLevel[0])
+		if err != nil {
+			return fmt.Errorf("level must be int")
+		}
 		if valLevel == 0 {
 			valLevel = 0
 		}
 	}
 	in.Level = valLevel
+	return nil
+}
+
+func (in OtherCreateParams) Validate() error {
+	if in.Username == "" { return fmt.Errorf("username must me not empty")}
+	if len(in.Username) < 3 { return fmt.Errorf("username len must me >= 3")}
+	enumValues := []string{"warrior","sorcerer","rouge"}
+	if !checkEnum(enumValues, in.Class) {
+		errorMsg := "class must be one of " + "[" + strings.Join(enumValues, ", ") + "]"
+		return fmt.Errorf(errorMsg)
+	}
+	if in.Level < 1 { return fmt.Errorf("level must be >= 1")}
+	if in.Level > 50 { return fmt.Errorf("level must be <= 50")}
 	return nil
 }
 

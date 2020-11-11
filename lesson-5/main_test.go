@@ -179,7 +179,7 @@ func TestMyApi(t *testing.T) {
 			Status: http.StatusBadRequest,
 			Auth:   true,
 			Result: CR{
-				"error": "login len must be >= 10",
+				"error": "login len must me >= 10",
 			},
 		},
 		Case{
