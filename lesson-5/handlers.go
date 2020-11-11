@@ -264,7 +264,7 @@ func (in *CreateParams) Unpack(r *http.Request) error {
 
 func (in CreateParams) Validate() error {
 	if in.Login == "" { return fmt.Errorf("login must me not empty")}
-	if len(in.Login) < 10 { return fmt.Errorf("login len must me >= 10")}
+	if len(in.Login) < 10 { return fmt.Errorf("login len must be >= 10")}
 	enumValues := []string{"user","moderator","admin"}
 	if !checkEnum(enumValues, in.Status) {
 		errorMsg := "status must be one of " + "[" + strings.Join(enumValues, ", ") + "]"
@@ -430,7 +430,7 @@ func (in *OtherCreateParams) Unpack(r *http.Request) error {
 
 func (in OtherCreateParams) Validate() error {
 	if in.Username == "" { return fmt.Errorf("username must me not empty")}
-	if len(in.Username) < 3 { return fmt.Errorf("username len must me >= 3")}
+	if len(in.Username) < 3 { return fmt.Errorf("username len must be >= 3")}
 	enumValues := []string{"warrior","sorcerer","rouge"}
 	if !checkEnum(enumValues, in.Class) {
 		errorMsg := "class must be one of " + "[" + strings.Join(enumValues, ", ") + "]"

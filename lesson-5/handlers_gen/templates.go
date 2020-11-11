@@ -15,6 +15,7 @@ const importStr = `import (
 	"strings"
 )
 `
+
 var (
 	serveHTTPTpl = template.Must(template.New("serveHTTPBase").Parse(`func (h *{{.StructName}}) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
@@ -188,7 +189,7 @@ func (h *{{.ReceiverType}}) wrapper{{.FuncName}}(w http.ResponseWriter, r *http.
 	requiredTemplateInt = "\tif in.%s == 0 { return fmt.Errorf(\"%s must me not empty\")}\n"
 	requiredTemplateString = "\tif in.%s == \"\" { return fmt.Errorf(\"%s must me not empty\")}\n"
 	minTemplateInt = "\tif in.%s < %s { return fmt.Errorf(\"%s must be >= %s\")}\n"
-	minTemplateString= "\tif len(in.%s) < %s { return fmt.Errorf(\"%s len must me >= %s\")}\n"
+	minTemplateString= "\tif len(in.%s) < %s { return fmt.Errorf(\"%s len must be >= %s\")}\n"
 	maxTemplate = "\tif in.%s > %s { return fmt.Errorf(\"%s must be <= %s\")}\n"
 	checkEnumTemplate = `	enumValues := %v
 	if !checkEnum(enumValues, in.%s) {
