@@ -15,16 +15,6 @@ const importStr = `import (
 	"strings"
 )
 `
-
-func checkEnum(enum []string, value string) bool {
-	for _, v := range enum {
-		if v == value {
-			return true
-		}
-	}
-	return false
-}
-
 var (
 	serveHTTPTpl = template.Must(template.New("serveHTTPBase").Parse(`func (h *{{.StructName}}) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
