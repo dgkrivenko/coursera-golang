@@ -2,16 +2,23 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 )
 
 // DBExplorer - database manager
 // db - database connection
 // tables - information about tables it's columns
 type DBExplorer struct {
-	db *sql.DB
-	tables map[string]map[string]tableInfo
+	db        *sql.DB
+	tables    map[string]map[string]tableInfo
+	singleURL *regexp.Regexp
+	paramURL  *regexp.Regexp
 }
 
 // tableInfo - table information
@@ -68,25 +75,200 @@ func New(db *sql.DB) (*DBExplorer, error) {
 		}
 	}
 
+	// Compile url regexp
+	instance.singleURL, err = regexp.Compile(`^/.+$`)
+	if err != nil {
+		return nil, err
+	}
+	instance.paramURL, err = regexp.Compile(`^/.+/.`)
+	if err != nil {
+		return nil, err
+	}
+
 	return instance, nil
 }
 
-// mainPage - returns all available tables
-func (e *DBExplorer) mainPage(w http.ResponseWriter, r *http.Request) {
+func (e *DBExplorer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
+	if r.URL.Path == "/" {
+		e.mainPageHandler(w, r)
+		return
+	}
+
+	if e.paramURL.MatchString(r.URL.Path) {
+		if r.Method == http.MethodGet {
+			e.getRecordHandler(w, r)
+		} else if r.Method == http.MethodPost {
+			e.updateRecordHandler(w, r)
+		} else if r.Method == http.MethodDelete{
+			e.deleteRecordHandler(w, r)
+		} else {
+			fmt.Println("Method not allowed")
+		}
+	} else if e.singleURL.MatchString(r.URL.Path) {
+
+		if r.Method == http.MethodGet {
+			e.recordListHandler(w, r)
+		} else if r.Method == http.MethodPut {
+			e.createRecordHandler(w, r)
+		} else {
+			fmt.Println("Method not allowed")
+		}
+	} else {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte{})
+	}
 }
 
-func NewDbExplorer(db *sql.DB) (http.Handler, error) {
+func NewDbExplorer(db *sql.DB) (*DBExplorer, error) {
 	instance, err := New(db)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println(instance.tables)
+	return instance, nil
+}
 
+// mainPageHandler - returns all available tables
+func (e *DBExplorer) mainPageHandler(w http.ResponseWriter, r *http.Request) {
+	tables := map[string][]string{
+		"tables": make([]string, 0, len(e.tables)),
+	}
+	for k, _ := range e.tables {
+		tables["tables"] = append(tables["tables"], k)
+	}
 
-	siteMux := http.NewServeMux()
-	siteMux.HandleFunc("/", instance.mainPage)
+	response := map[string]interface{}{"response": tables}
+	data, err := json.Marshal(response)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
 
-	return siteMux, nil
+	_, err = w.Write(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (e *DBExplorer) recordListHandler(w http.ResponseWriter, r *http.Request) {
+	var limit = 5
+	var offset int
+
+	// if the table does not exist return an error
+	table := strings.Split(r.URL.Path, "/")[1]
+	if _, ok := e.tables[table]; !ok {
+		w.WriteHeader(http.StatusNotFound)
+		resp := map[string]string{"error": "unknown table"}
+		data, _ := json.Marshal(resp)
+		_, err := w.Write(data)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	// Set limit value
+	v := r.URL.Query().Get("limit")
+	if v != "" {
+		limitVal, err := strconv.Atoi(v)
+		if err == nil {
+			limit = limitVal
+		}
+	}
+
+	// Set offset value
+	v = r.URL.Query().Get("offset")
+	if v != "" {
+		offsetVal, err := strconv.Atoi(v)
+		if err == nil {
+			offset = offsetVal
+		}
+	}
+
+	query := fmt.Sprintf("SELECT * FROM %s LIMIT %d OFFSET %d", table, limit, offset)
+	rows, err := e.db.Query(query)
+	if err != nil {
+		errorHandler(err, w)
+		return
+	}
+
+	resp := map[string]map[string][]interface{}{
+		"response": {
+			"records": make([]interface{}, 0),
+		},
+	}
+
+	for rows.Next() {
+		colsTypes, err := rows.ColumnTypes()
+		if err != nil {
+			errorHandler(err, w)
+			return
+		}
+
+		// Create buffer for scan operation
+		columnsNum := len(colsTypes)
+		var buf = make([]interface{}, 0, columnsNum)
+
+		// Scan data
+		for i := 0; i < columnsNum; i++ {
+			buf = append(buf, createScanBuffer(colsTypes[i].DatabaseTypeName()))
+		}
+		err = rows.Scan(buf...)
+		if err != nil {
+			errorHandler(err, w)
+			return
+		}
+
+		record := map[string]interface{}{}
+		for i, v := range colsTypes{
+			record[v.Name()] = buf[i]
+		}
+		resp["response"]["records"] = append(resp["response"]["records"], record)
+	}
+	data, _ := json.Marshal(resp)
+	_, err = w.Write(data)
+	if err != nil {
+		errorHandler(err, w)
+		return
+	}
+
+}
+
+func (e *DBExplorer) getRecordHandler(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func (e *DBExplorer) createRecordHandler(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func (e *DBExplorer) updateRecordHandler(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func (e *DBExplorer) deleteRecordHandler(w http.ResponseWriter, r *http.Request) {
+
+}
+
+func createScanBuffer(typeName string) interface{} {
+	switch typeName {
+	case "INT":
+		return new(int)
+	case "VARCHAR":
+		return new(*string)
+	case "TEXT":
+		return new(*string)
+	}
+	return nil
+}
+
+func errorHandler(err error, w http.ResponseWriter) {
+	log.Println(err)
+	w.WriteHeader(http.StatusInternalServerError)
+	_, err = w.Write([]byte{})
+	if err != nil {
+		log.Fatal(err)
+	}
 }
