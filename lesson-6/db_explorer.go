@@ -16,7 +16,7 @@ import (
 // tables - information about tables it's columns
 type DBExplorer struct {
 	db        *sql.DB
-	tables    map[string]map[string]tableInfo
+	tables    map[string][]tableInfo
 	singleURL *regexp.Regexp
 	paramURL  *regexp.Regexp
 }
@@ -41,7 +41,7 @@ func New(db *sql.DB) (*DBExplorer, error) {
 
 	instance := new(DBExplorer)
 	instance.db = db
-	instance.tables = map[string]map[string]tableInfo{}
+	instance.tables = map[string][]tableInfo{}
 
 	// Get tables list from database
 	rows, err := db.Query(showTables)
@@ -54,7 +54,7 @@ func New(db *sql.DB) (*DBExplorer, error) {
 		if err != nil {
 			return nil, err
 		}
-		instance.tables[name] = map[string]tableInfo{}
+		instance.tables[name] = []tableInfo{}
 	}
 
 	// Get tables info from database
@@ -71,7 +71,7 @@ func New(db *sql.DB) (*DBExplorer, error) {
 			if err != nil {
 				return nil, err
 			}
-			instance.tables[k][data.ColumnName.String] = data
+			instance.tables[k] = append(instance.tables[k], data)
 		}
 	}
 
@@ -100,7 +100,7 @@ func (e *DBExplorer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			e.getRecordHandler(w, r)
 		} else if r.Method == http.MethodPost {
 			e.updateRecordHandler(w, r)
-		} else if r.Method == http.MethodDelete{
+		} else if r.Method == http.MethodDelete {
 			e.deleteRecordHandler(w, r)
 		} else {
 			fmt.Println("Method not allowed")
@@ -190,9 +190,10 @@ func (e *DBExplorer) recordListHandler(w http.ResponseWriter, r *http.Request) {
 	query := fmt.Sprintf("SELECT * FROM %s LIMIT %d OFFSET %d", table, limit, offset)
 	rows, err := e.db.Query(query)
 	if err != nil {
-		errorHandler(err, w)
+		errorResponse(http.StatusInternalServerError, "", w)
 		return
 	}
+	defer rows.Close()
 
 	resp := map[string]map[string][]interface{}{
 		"response": {
@@ -207,14 +208,13 @@ func (e *DBExplorer) recordListHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Create buffer for scan operation
-		columnsNum := len(colsTypes)
-		var buf = make([]interface{}, 0, columnsNum)
-
-		// Scan data
-		for i := 0; i < columnsNum; i++ {
-			buf = append(buf, createScanBuffer(colsTypes[i].DatabaseTypeName()))
+		// Create a buffer to read data
+		buf, colsTypes, err := createScanBuffer(rows)
+		if err != nil {
+			errorResponse(http.StatusInternalServerError, "", w)
+			return
 		}
+
 		err = rows.Scan(buf...)
 		if err != nil {
 			errorHandler(err, w)
@@ -222,22 +222,83 @@ func (e *DBExplorer) recordListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		record := map[string]interface{}{}
-		for i, v := range colsTypes{
+		for i, v := range colsTypes {
 			record[v.Name()] = buf[i]
 		}
 		resp["response"]["records"] = append(resp["response"]["records"], record)
 	}
+
 	data, _ := json.Marshal(resp)
 	_, err = w.Write(data)
 	if err != nil {
 		errorHandler(err, w)
 		return
 	}
-
 }
 
 func (e *DBExplorer) getRecordHandler(w http.ResponseWriter, r *http.Request) {
+	// if the table does not exist return an error
+	table := strings.Split(r.URL.Path, "/")[1]
+	if _, ok := e.tables[table]; !ok {
+		errorResponse(http.StatusNotFound, "unknown table", w)
+		return
+	}
 
+	// Get record id
+	recordID := strings.Split(r.URL.Path, "/")[2]
+	id, err := strconv.Atoi(recordID)
+	if err != nil {
+		errorResponse(http.StatusBadRequest, "field id title have invalid type", w)
+		return
+	}
+
+	// Execute sql-query
+	query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", table, e.getPKFieldName(table))
+	rows, err := e.db.Query(query, id)
+	if err != nil {
+		errorHandler(err, w)
+		return
+	}
+	defer rows.Close()
+
+	// Create a buffer to read data
+	buf, colsTypes, err := createScanBuffer(rows)
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			errorResponse(http.StatusInternalServerError, "", w)
+			return
+		}
+		errorResponse(http.StatusNotFound, "record not found", w)
+		return
+	}
+	err = rows.Scan(buf...)
+	if err != nil {
+		errorHandler(err, w)
+		return
+	}
+
+	record := map[string]interface{}{}
+	for i, v := range colsTypes {
+		record[v.Name()] = buf[i]
+	}
+
+	resp := map[string]map[string]interface{}{
+		"response": {
+			"record": record,
+		},
+	}
+
+	data, _ := json.Marshal(resp)
+	_, err = w.Write(data)
+	if err != nil {
+		errorHandler(err, w)
+		return
+	}
 }
 
 func (e *DBExplorer) createRecordHandler(w http.ResponseWriter, r *http.Request) {
@@ -252,7 +313,46 @@ func (e *DBExplorer) deleteRecordHandler(w http.ResponseWriter, r *http.Request)
 
 }
 
-func createScanBuffer(typeName string) interface{} {
+func errorResponse(code int, message string, w http.ResponseWriter) {
+	w.WriteHeader(code)
+	if message == "" {
+		_, err := w.Write([]byte{})
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	data := map[string]interface{}{
+		"error": message,
+	}
+	resp, err := json.Marshal(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = w.Write(resp)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func createScanBuffer(rows *sql.Rows) ([]interface{}, []*sql.ColumnType, error) {
+	colsTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create buffer for scan operation
+	columnsNum := len(colsTypes)
+	var buf = make([]interface{}, 0, columnsNum)
+
+	// Scan data
+	for i := 0; i < columnsNum; i++ {
+		buf = append(buf, createBuffer(colsTypes[i].DatabaseTypeName()))
+	}
+	return buf, colsTypes, nil
+}
+
+func createBuffer(typeName string) interface{} {
 	switch typeName {
 	case "INT":
 		return new(int)
@@ -271,4 +371,13 @@ func errorHandler(err error, w http.ResponseWriter) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func (e *DBExplorer) getPKFieldName(table string) string {
+	for _, v := range e.tables[table] {
+		if v.Key.String == "PRI" {
+			return v.ColumnName.String
+		}
+	}
+	return ""
 }
