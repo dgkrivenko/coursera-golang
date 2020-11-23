@@ -104,7 +104,7 @@ func (e *DBExplorer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else if r.Method == http.MethodDelete {
 			e.deleteRecordHandler(w, r)
 		} else {
-			fmt.Println("Method not allowed")
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	} else if e.singleURL.MatchString(r.URL.Path) {
 
@@ -113,7 +113,7 @@ func (e *DBExplorer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else if r.Method == http.MethodPut {
 			e.createRecordHandler(w, r)
 		} else {
-			fmt.Println("Method not allowed")
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	} else {
 		w.WriteHeader(http.StatusNotFound)
@@ -451,7 +451,44 @@ func (e *DBExplorer) updateRecordHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (e *DBExplorer) deleteRecordHandler(w http.ResponseWriter, r *http.Request) {
+	// if the table does not exist return an error
+	table := strings.Split(r.URL.Path, "/")[1]
+	if _, ok := e.tables[table]; !ok {
+		errorResponse(http.StatusNotFound, "unknown table", w)
+		return
+	}
 
+	// Get record id
+	recordID := strings.Split(r.URL.Path, "/")[2]
+	id, err := strconv.Atoi(recordID)
+	if err != nil {
+		errorResponse(http.StatusBadRequest, "field id title have invalid type", w)
+		return
+	}
+	pk := e.getPKFieldName(table)
+
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", table, pk)
+	result, err := e.db.Exec(query, id)
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	response := map[string]interface{}{
+		"response": map[string]int64{
+			"deleted": count,
+		},
+	}
+	resp, _ := json.Marshal(response)
+	_, err = w.Write(resp)
+	if err != nil {
+		errorHandler(err, w)
+		return
+	}
 }
 
 func errorResponse(code int, message string, w http.ResponseWriter) {

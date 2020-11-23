@@ -95,7 +95,7 @@ func TestApis(t *testing.T) {
 	PrepareTestApis(db)
 
 	// возможно вам будет удобно закомментировать это чтобы смотреть результат после теста
-	//defer CleanupTestApis(db)
+	defer CleanupTestApis(db)
 
 	handler, err := NewDbExplorer(db)
 	if err != nil {
@@ -353,31 +353,31 @@ func TestApis(t *testing.T) {
 		},
 
 		// удаление
-		//Case{
-		//	Path:   "/items/3",
-		//	Method: http.MethodDelete,
-		//	Result: CR{
-		//		"response": CR{
-		//			"deleted": 1,
-		//		},
-		//	},
-		//},
-		//Case{
-		//	Path:   "/items/3",
-		//	Method: http.MethodDelete,
-		//	Result: CR{
-		//		"response": CR{
-		//			"deleted": 0,
-		//		},
-		//	},
-		//},
-		//Case{
-		//	Path:   "/items/3",
-		//	Status: http.StatusNotFound,
-		//	Result: CR{
-		//		"error": "record not found",
-		//	},
-		//},
+		Case{
+			Path:   "/items/3",
+			Method: http.MethodDelete,
+			Result: CR{
+				"response": CR{
+					"deleted": 1,
+				},
+			},
+		},
+		Case{
+			Path:   "/items/3",
+			Method: http.MethodDelete,
+			Result: CR{
+				"response": CR{
+					"deleted": 0,
+				},
+			},
+		},
+		Case{
+			Path:   "/items/3",
+			Status: http.StatusNotFound,
+			Result: CR{
+				"error": "record not found",
+			},
+		},
 
 		// и немного по другой таблице
 		Case{
