@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"regexp"
@@ -302,11 +303,151 @@ func (e *DBExplorer) getRecordHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (e *DBExplorer) createRecordHandler(w http.ResponseWriter, r *http.Request) {
+	// if the table does not exist return an error
+	table := strings.Split(r.URL.Path, "/")[1]
+	if _, ok := e.tables[table]; !ok {
+		errorResponse(http.StatusNotFound, "unknown table", w)
+		return
+	}
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	data := map[string]interface{}{}
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	err = e.validateTypes(table, data)
+	if err != nil {
+		errorResponse(http.StatusBadRequest, err.Error(), w)
+		return
+	}
 
+	e.filterColumns(table, data)
+
+	pk := e.getPKFieldName(table)
+
+	query := "INSERT INTO %s (%s) VALUES (%s)"
+	filedNames := make([]string, 0, len(data))
+	filedValues := make([]interface{}, 0, len(data))
+	esc := make([]string, 0, len(data))
+
+	for _, c := range e.tables[table] {
+		if c.ColumnName.String == pk {
+			continue
+		}
+		filedNames = append(filedNames, c.ColumnName.String)
+		esc = append(esc, "?")
+		v, ok := data[c.ColumnName.String]
+		if ok {
+			filedValues = append(filedValues, v)
+		} else {
+			filedValues = append(filedValues, getDefaultValue(c))
+		}
+	}
+
+	fields := strings.Join(filedNames, ", ")
+	valuesEsc := strings.Join(esc, ",")
+	result, err := e.db.Exec(fmt.Sprintf(query, table, fields, valuesEsc), filedValues...)
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	response := map[string]interface{}{
+		"response": map[string]int64{
+			pk: id,
+		},
+	}
+
+	resp, _ := json.Marshal(response)
+	_, err = w.Write(resp)
+	if err != nil {
+		errorHandler(err, w)
+		return
+	}
 }
 
 func (e *DBExplorer) updateRecordHandler(w http.ResponseWriter, r *http.Request) {
+	// if the table does not exist return an error
+	table := strings.Split(r.URL.Path, "/")[1]
+	if _, ok := e.tables[table]; !ok {
+		errorResponse(http.StatusNotFound, "unknown table", w)
+		return
+	}
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	data := map[string]interface{}{}
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
 
+	pk := e.getPKFieldName(table)
+
+	// Get record id
+	recordID := strings.Split(r.URL.Path, "/")[2]
+	id, err := strconv.Atoi(recordID)
+	if err != nil {
+		msg := fmt.Sprintf("field %d title have invalid type", id)
+		errorResponse(http.StatusBadRequest, msg, w)
+		return
+	}
+
+	err = e.validateTypes(table, data)
+	if err != nil {
+		errorResponse(http.StatusBadRequest, err.Error(), w)
+		return
+	}
+
+	query := "UPDATE %s SET %s WHERE %s=?"
+	updates := make([]string, 0, len(data))
+	values := make([]interface{}, 0, len(data))
+	for k, v := range data {
+		if k == pk { // Primary key cannot be updated on an existing record
+			msg := fmt.Sprintf("field %s have invalid type", pk)
+			errorResponse(http.StatusBadRequest, msg, w)
+			return
+		}
+		updates = append(updates, fmt.Sprintf("%s=?", k))
+		values = append(values, v)
+	}
+	values = append(values, id)
+
+	updateStr := strings.Join(updates, ", ")
+	result, err := e.db.Exec(fmt.Sprintf(query, table, updateStr, pk), values...)
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		errorResponse(http.StatusInternalServerError, "", w)
+		return
+	}
+	response := map[string]interface{}{
+		"response": map[string]int64{
+			"updated": count,
+		},
+	}
+
+	resp, _ := json.Marshal(response)
+	_, err = w.Write(resp)
+	if err != nil {
+		errorHandler(err, w)
+		return
+	}
 }
 
 func (e *DBExplorer) deleteRecordHandler(w http.ResponseWriter, r *http.Request) {
@@ -380,4 +521,71 @@ func (e *DBExplorer) getPKFieldName(table string) string {
 		}
 	}
 	return ""
+}
+
+func (e *DBExplorer) validateTypes(table string, data map[string]interface{}) error {
+	columns := e.tables[table]
+	for _, c := range columns {
+		v, ok := data[c.ColumnName.String]
+		if !ok {
+			continue
+		}
+		if c.Null.String == "YES" && v == nil {
+			continue
+		}
+
+		switch c.ColumnType.String {
+		case "int(11)":
+			_, ok := v.(float64)
+			if !ok {
+				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
+			}
+		case "varchar(255)":
+			_, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
+			}
+		case "text":
+			_, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
+			}
+		case "float":
+			_, ok := v.(float64)
+			if !ok {
+				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
+			}
+		}
+	}
+	return nil
+}
+
+func getDefaultValue(info tableInfo) interface{} {
+	if !info.Default.Valid && info.Null.String == "YES" {
+		return nil
+	} else if !info.Default.Valid {
+		switch info.ColumnType.String {
+		case "int(11)":
+			return float64(0)
+		case "varchar(255)":
+			return ""
+		case "text":
+			return ""
+		case "float":
+			return float64(0)
+		}
+	}
+	return info.Default.String
+}
+
+func (e *DBExplorer) filterColumns(table string, data map[string]interface{}) {
+DataLoop:
+	for k, _ := range data {
+		for _, c := range e.tables[table] {
+			if c.ColumnName.String == k {
+				continue DataLoop
+			}
+		}
+		delete(data, k)
+	}
 }

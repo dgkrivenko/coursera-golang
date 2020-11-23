@@ -29,7 +29,6 @@ CREATE TABLE `users` (
   PRIMARY KEY (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-INSERT INTO `users` (`user_id`, `login`, `password`, `email`, `info`, `updated`) VALUES
-(1,	'rvasily',	'love',	'rvasily@example.com',	'none',	NULL);
+INSERT INTO `users` (`user_id`, `login`, `password`, `email`, `info`, `updated`) VALUES (1,	'rvasily',	'love',	'rvasily@example.com',	'none',	NULL);
 
 -- 2017-11-22 23:33:12
