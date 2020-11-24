@@ -89,6 +89,7 @@ func New(db *sql.DB) (*DBExplorer, error) {
 	return instance, nil
 }
 
+// ServeHTTP - implements http.Handler interface
 func (e *DBExplorer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == "/" {
@@ -96,6 +97,7 @@ func (e *DBExplorer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Router
 	if e.paramURL.MatchString(r.URL.Path) {
 		if r.Method == http.MethodGet {
 			e.getRecordHandler(w, r)
@@ -121,14 +123,159 @@ func (e *DBExplorer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// NewDbExplorer - create new explorer instance
 func NewDbExplorer(db *sql.DB) (*DBExplorer, error) {
 	instance, err := New(db)
 	if err != nil {
 		panic(err)
 	}
-
 	return instance, nil
 }
+
+// errorResponse - return error response to client
+func errorResponse(code int, message string, w http.ResponseWriter) {
+	w.WriteHeader(code)
+	if message == "" {
+		_, err := w.Write([]byte{})
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	data := map[string]interface{}{
+		"error": message,
+	}
+	resp, err := json.Marshal(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = w.Write(resp)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+// createScanBuffer - create slice with variables for scan sql operation result
+func createScanBuffer(rows *sql.Rows) ([]interface{}, []*sql.ColumnType, error) {
+	colsTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create buffer for scan operation
+	columnsNum := len(colsTypes)
+	var buf = make([]interface{}, 0, columnsNum)
+
+	// Scan data
+	for i := 0; i < columnsNum; i++ {
+		buf = append(buf, createBuffer(colsTypes[i].DatabaseTypeName()))
+	}
+	return buf, colsTypes, nil
+}
+
+// createBuffer - create buffer for single variable
+func createBuffer(typeName string) interface{} {
+	switch typeName {
+	case "INT":
+		return new(int)
+	case "VARCHAR":
+		return new(*string)
+	case "TEXT":
+		return new(*string)
+	}
+	return nil
+}
+
+// errorHandler - handle fatal erros
+func errorHandler(err error, w http.ResponseWriter) {
+	log.Println(err)
+	w.WriteHeader(http.StatusInternalServerError)
+	_, err = w.Write([]byte{})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+// getPKFieldName - get pk filed name
+func (e *DBExplorer) getPKFieldName(table string) string {
+	for _, v := range e.tables[table] {
+		if v.Key.String == "PRI" {
+			return v.ColumnName.String
+		}
+	}
+	return ""
+}
+
+// validateTypes - validate type before insert
+func (e *DBExplorer) validateTypes(table string, data map[string]interface{}) error {
+	columns := e.tables[table]
+	for _, c := range columns {
+		v, ok := data[c.ColumnName.String]
+		if !ok {
+			continue
+		}
+		if c.Null.String == "YES" && v == nil {
+			continue
+		}
+
+		switch c.ColumnType.String {
+		case "int(11)":
+			_, ok := v.(float64)
+			if !ok {
+				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
+			}
+		case "varchar(255)":
+			_, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
+			}
+		case "text":
+			_, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
+			}
+		case "float":
+			_, ok := v.(float64)
+			if !ok {
+				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
+			}
+		}
+	}
+	return nil
+}
+
+// getDefaultValue - get default value for column
+func getDefaultValue(info tableInfo) interface{} {
+	if !info.Default.Valid && info.Null.String == "YES" {
+		return nil
+	} else if !info.Default.Valid {
+		switch info.ColumnType.String {
+		case "int(11)":
+			return float64(0)
+		case "varchar(255)":
+			return ""
+		case "text":
+			return ""
+		case "float":
+			return float64(0)
+		}
+	}
+	return info.Default.String
+}
+
+// filterColumns - delete unknown fields
+func (e *DBExplorer) filterColumns(table string, data map[string]interface{}) {
+DataLoop:
+	for k, _ := range data {
+		for _, c := range e.tables[table] {
+			if c.ColumnName.String == k {
+				continue DataLoop
+			}
+		}
+		delete(data, k)
+	}
+}
+
 
 // mainPageHandler - returns all available tables
 func (e *DBExplorer) mainPageHandler(w http.ResponseWriter, r *http.Request) {
@@ -153,6 +300,7 @@ func (e *DBExplorer) mainPageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// recordListHandler - return all records from table
 func (e *DBExplorer) recordListHandler(w http.ResponseWriter, r *http.Request) {
 	var limit = 5
 	var offset int
@@ -237,6 +385,7 @@ func (e *DBExplorer) recordListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getRecordHandler - return detail record info
 func (e *DBExplorer) getRecordHandler(w http.ResponseWriter, r *http.Request) {
 	// if the table does not exist return an error
 	table := strings.Split(r.URL.Path, "/")[1]
@@ -302,6 +451,7 @@ func (e *DBExplorer) getRecordHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// createRecordHandler - create new record
 func (e *DBExplorer) createRecordHandler(w http.ResponseWriter, r *http.Request) {
 	// if the table does not exist return an error
 	table := strings.Split(r.URL.Path, "/")[1]
@@ -375,6 +525,7 @@ func (e *DBExplorer) createRecordHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// updateRecordHandler - update record info
 func (e *DBExplorer) updateRecordHandler(w http.ResponseWriter, r *http.Request) {
 	// if the table does not exist return an error
 	table := strings.Split(r.URL.Path, "/")[1]
@@ -450,6 +601,7 @@ func (e *DBExplorer) updateRecordHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// deleteRecordHandler - delete record info
 func (e *DBExplorer) deleteRecordHandler(w http.ResponseWriter, r *http.Request) {
 	// if the table does not exist return an error
 	table := strings.Split(r.URL.Path, "/")[1]
@@ -488,141 +640,5 @@ func (e *DBExplorer) deleteRecordHandler(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		errorHandler(err, w)
 		return
-	}
-}
-
-func errorResponse(code int, message string, w http.ResponseWriter) {
-	w.WriteHeader(code)
-	if message == "" {
-		_, err := w.Write([]byte{})
-		if err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	data := map[string]interface{}{
-		"error": message,
-	}
-	resp, err := json.Marshal(data)
-	if err != nil {
-		log.Fatal(err)
-	}
-	_, err = w.Write(resp)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func createScanBuffer(rows *sql.Rows) ([]interface{}, []*sql.ColumnType, error) {
-	colsTypes, err := rows.ColumnTypes()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Create buffer for scan operation
-	columnsNum := len(colsTypes)
-	var buf = make([]interface{}, 0, columnsNum)
-
-	// Scan data
-	for i := 0; i < columnsNum; i++ {
-		buf = append(buf, createBuffer(colsTypes[i].DatabaseTypeName()))
-	}
-	return buf, colsTypes, nil
-}
-
-func createBuffer(typeName string) interface{} {
-	switch typeName {
-	case "INT":
-		return new(int)
-	case "VARCHAR":
-		return new(*string)
-	case "TEXT":
-		return new(*string)
-	}
-	return nil
-}
-
-func errorHandler(err error, w http.ResponseWriter) {
-	log.Println(err)
-	w.WriteHeader(http.StatusInternalServerError)
-	_, err = w.Write([]byte{})
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func (e *DBExplorer) getPKFieldName(table string) string {
-	for _, v := range e.tables[table] {
-		if v.Key.String == "PRI" {
-			return v.ColumnName.String
-		}
-	}
-	return ""
-}
-
-func (e *DBExplorer) validateTypes(table string, data map[string]interface{}) error {
-	columns := e.tables[table]
-	for _, c := range columns {
-		v, ok := data[c.ColumnName.String]
-		if !ok {
-			continue
-		}
-		if c.Null.String == "YES" && v == nil {
-			continue
-		}
-
-		switch c.ColumnType.String {
-		case "int(11)":
-			_, ok := v.(float64)
-			if !ok {
-				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
-			}
-		case "varchar(255)":
-			_, ok := v.(string)
-			if !ok {
-				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
-			}
-		case "text":
-			_, ok := v.(string)
-			if !ok {
-				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
-			}
-		case "float":
-			_, ok := v.(float64)
-			if !ok {
-				return fmt.Errorf("field %s have invalid type", c.ColumnName.String)
-			}
-		}
-	}
-	return nil
-}
-
-func getDefaultValue(info tableInfo) interface{} {
-	if !info.Default.Valid && info.Null.String == "YES" {
-		return nil
-	} else if !info.Default.Valid {
-		switch info.ColumnType.String {
-		case "int(11)":
-			return float64(0)
-		case "varchar(255)":
-			return ""
-		case "text":
-			return ""
-		case "float":
-			return float64(0)
-		}
-	}
-	return info.Default.String
-}
-
-func (e *DBExplorer) filterColumns(table string, data map[string]interface{}) {
-DataLoop:
-	for k, _ := range data {
-		for _, c := range e.tables[table] {
-			if c.ColumnName.String == k {
-				continue DataLoop
-			}
-		}
-		delete(data, k)
 	}
 }
