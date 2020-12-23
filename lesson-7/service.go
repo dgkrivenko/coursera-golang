@@ -7,15 +7,20 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/tap"
 	"log"
 	"net"
 	"regexp"
+	"sync"
+	"time"
 )
-
 
 type AdminService struct {
 	UnimplementedAdminServer
+	OpenConnections []Admin_LoggingServer
+	Ch              chan *Event
 }
 
 type BizService struct {
@@ -24,6 +29,30 @@ type BizService struct {
 
 type Permissions struct {
 	Data map[string][]string
+}
+
+type Logger struct {
+	Ch chan *Event
+}
+
+func (lg *Logger) SendEvent(ctx context.Context, info *tap.Info) (context.Context, error) {
+	var consumerVal string
+	md, _ := metadata.FromIncomingContext(ctx)
+	p, _ := peer.FromContext(ctx)
+	consumer := md.Get("consumer")
+	if len(consumer) > 0 {
+		consumerVal = consumer[0]
+	}
+	go func(consumer, method, host string) {
+		event := &Event{
+			Timestamp: time.Now().Unix(),
+			Consumer:  consumer,
+			Method:    method,
+			Host:      host,
+		}
+		lg.Ch <- event
+	}(consumerVal, info.FullMethodName, p.Addr.String())
+	return ctx, nil
 }
 
 // checkUnaryPermission - check permissions for unary methods
@@ -74,20 +103,31 @@ func (acl *Permissions) checkStreamPermission(
 
 // ================================ Admin methods ================================
 
-func NewAdminService() *AdminService {
-	return &AdminService{}
+func NewAdminService(ch chan *Event) *AdminService {
+	return &AdminService{Ch: ch}
 }
 
 func (as *AdminService) Logging(n *Nothing, server Admin_LoggingServer) error {
-	// Добавить сервер в поле структуры
-	// Если там единственный сервер запустить горутину
-	go func() {
-		for {
-			// Ждем сообщение из канала
-			// Обходим массив с серверами и в каждом делаем send
-			break
-		}
-	}()
+	as.OpenConnections = append(as.OpenConnections, server)
+	wg := &sync.WaitGroup{} // TODO wg вынести в структуру
+	if len(as.OpenConnections) == 1 {
+		wg.Add(1)
+		go func() {
+			for {
+				if len(as.OpenConnections) == 2 {
+					fmt.Println(2)
+				}
+				event := <-as.Ch
+				for _, srv := range as.OpenConnections {
+					err := srv.Send(event)
+					if err != nil {
+						fmt.Println("Server err:", err)
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
 	return nil
 }
 
@@ -95,7 +135,7 @@ func (as *AdminService) Statistics(interval *StatInterval, srv Admin_StatisticsS
 	return nil
 }
 
-// ============================== Biz methods (mock) ==============================
+// ============================== Biz methods ==============================
 
 func NewBizService() *BizService {
 	return &BizService{}
@@ -127,19 +167,22 @@ func StartMyMicroservice(ctx context.Context, addr string, ACLData string) error
 	if err != nil {
 		log.Fatalln("cant listet port", err)
 	}
+	ch := make(chan *Event, 10)
+	logger := Logger{Ch: ch}
 
 	server := grpc.NewServer(
 		grpc.UnaryInterceptor(acl.checkUnaryPermission),
 		grpc.StreamInterceptor(acl.checkStreamPermission),
+		grpc.InTapHandle(logger.SendEvent),
 	)
 
-	RegisterAdminServer(server, NewAdminService())
+	RegisterAdminServer(server, NewAdminService(ch))
 	RegisterBizServer(server, NewBizService())
 
 	fmt.Println("starting server at :8082")
 	go server.Serve(lis)
 	go func() {
-		<- ctx.Done()
+		<-ctx.Done()
 		server.Stop()
 	}()
 	return nil

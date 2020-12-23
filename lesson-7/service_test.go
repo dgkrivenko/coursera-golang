@@ -227,6 +227,7 @@ func TestLogging(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
+		time.Sleep(time.Second)
 		for i := 0; i < 3; i++ {
 			evt, err := logStream2.Recv()
 			// log.Println("logger 2", evt, err)
