@@ -22,7 +22,9 @@ type AdminService struct {
 	OpenConnections []Admin_LoggingServer
 	Ch              chan *Event
 	Wg              *sync.WaitGroup
-	Stats           *Stat
+	StatCh          chan *Stat
+	Middleware      *Middleware
+	sync.Mutex
 }
 
 type BizService struct {
@@ -33,11 +35,18 @@ type Permissions struct {
 	Data map[string][]string
 }
 
-type Logger struct {
-	Ch chan *Event
+type Middleware struct {
+	Ch    chan *Event
+	ChStats []chan *StatMessage
+	sync.Mutex
 }
 
-func (lg *Logger) SendEvent(ctx context.Context, info *tap.Info) (context.Context, error) {
+type StatMessage struct {
+	Method string
+	Consumer string
+}
+
+func (m *Middleware) SendEvent(ctx context.Context, info *tap.Info) (context.Context, error) {
 	var consumerVal string
 	md, _ := metadata.FromIncomingContext(ctx)
 	p, _ := peer.FromContext(ctx)
@@ -52,8 +61,21 @@ func (lg *Logger) SendEvent(ctx context.Context, info *tap.Info) (context.Contex
 			Method:    method,
 			Host:      host,
 		}
-		lg.Ch <- event
+		m.Ch <- event
 	}(consumerVal, info.FullMethodName, p.Addr.String())
+
+	go func(consumer, method string) {
+		msg := &StatMessage{
+			Method: method,
+			Consumer: consumer,
+		}
+		m.Lock()
+		for _, c := range m.ChStats {
+			c <- msg
+		}
+		m.Unlock()
+	}(consumerVal, info.FullMethodName)
+
 	return ctx, nil
 }
 
@@ -110,15 +132,50 @@ func NewAdminService(ch chan *Event) *AdminService {
 }
 
 func (as *AdminService) Logging(n *Nothing, server Admin_LoggingServer) error {
+	as.Lock()
 	as.OpenConnections = append(as.OpenConnections, server)
+	as.Unlock()
 	as.Wg.Wait()
 	return nil
 }
 
-func (as *AdminService) Statistics(interval *StatInterval, srv Admin_StatisticsServer) error {
-	go func(interval *StatInterval) {
-		// по таймеру отправляем результат
-	}(interval)
+func (as *AdminService) Statistics(interval *StatInterval, server Admin_StatisticsServer) error {
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	ch := make(chan *StatMessage, 10)
+	as.Middleware.Lock()
+	as.Middleware.ChStats = append(as.Middleware.ChStats, ch)
+	as.Middleware.Unlock()
+	st := &Stat{ByMethod: map[string]uint64{}, ByConsumer: map[string]uint64{}}
+
+	mu := &sync.Mutex{}
+
+	go func() {
+		for {
+			time.Sleep(time.Second * time.Duration(interval.IntervalSeconds))
+			mu.Lock()
+			err := server.Send(st)
+			if err != nil {
+				fmt.Println("Server err:", err)
+				break
+			}
+			st.ByMethod = map[string]uint64{}
+			st.ByConsumer = map[string]uint64{}
+			mu.Unlock()
+		}
+		wg.Done()
+	}()
+
+	go func(interval *StatInterval, group *sync.WaitGroup, ch chan *StatMessage) {
+		for {
+			 msg := <- ch
+			 mu.Lock()
+			 st.ByMethod[msg.Method] += 1
+			 st.ByConsumer[msg.Consumer] += 1
+			 mu.Unlock()
+		}
+	}(interval, wg, ch)
+	wg.Wait()
 	return nil
 }
 
@@ -155,17 +212,19 @@ func StartMyMicroservice(ctx context.Context, addr string, ACLData string) error
 		log.Fatalln("cant listet port", err)
 	}
 	ch := make(chan *Event, 10)
-	logger := Logger{Ch: ch}
+	mw := &Middleware{Ch: ch, ChStats: []chan *StatMessage{}}
 
 	server := grpc.NewServer(
 		grpc.UnaryInterceptor(acl.checkUnaryPermission),
 		grpc.StreamInterceptor(acl.checkStreamPermission),
-		grpc.InTapHandle(logger.SendEvent),
+		grpc.InTapHandle(mw.SendEvent),
 	)
 	as := NewAdminService(ch)
+	as.Middleware = mw
 	RegisterAdminServer(server, as)
 	RegisterBizServer(server, NewBizService())
 
+	// Middleware worker
 	quit := make(chan struct{})
 	as.Wg.Add(1)
 	go func(quit chan struct{}) {
@@ -174,12 +233,14 @@ func StartMyMicroservice(ctx context.Context, addr string, ACLData string) error
 			case <-quit:
 				return
 			case event := <-as.Ch:
+				as.Lock()
 				for _, srv := range as.OpenConnections {
 					err := srv.Send(event)
 					if err != nil {
 						fmt.Println("Server err:", err)
 					}
 				}
+				as.Unlock()
 			}
 		}
 	}(quit)
