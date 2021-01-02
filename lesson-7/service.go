@@ -21,6 +21,8 @@ type AdminService struct {
 	UnimplementedAdminServer
 	OpenConnections []Admin_LoggingServer
 	Ch              chan *Event
+	Wg              *sync.WaitGroup
+	Stats           *Stat
 }
 
 type BizService struct {
@@ -104,34 +106,19 @@ func (acl *Permissions) checkStreamPermission(
 // ================================ Admin methods ================================
 
 func NewAdminService(ch chan *Event) *AdminService {
-	return &AdminService{Ch: ch}
+	return &AdminService{Ch: ch, Wg: &sync.WaitGroup{}}
 }
 
 func (as *AdminService) Logging(n *Nothing, server Admin_LoggingServer) error {
 	as.OpenConnections = append(as.OpenConnections, server)
-	wg := &sync.WaitGroup{} // TODO wg вынести в структуру
-	if len(as.OpenConnections) == 1 {
-		wg.Add(1)
-		go func() {
-			for {
-				if len(as.OpenConnections) == 2 {
-					fmt.Println(2)
-				}
-				event := <-as.Ch
-				for _, srv := range as.OpenConnections {
-					err := srv.Send(event)
-					if err != nil {
-						fmt.Println("Server err:", err)
-					}
-				}
-			}
-		}()
-	}
-	wg.Wait()
+	as.Wg.Wait()
 	return nil
 }
 
 func (as *AdminService) Statistics(interval *StatInterval, srv Admin_StatisticsServer) error {
+	go func(interval *StatInterval) {
+		// по таймеру отправляем результат
+	}(interval)
 	return nil
 }
 
@@ -175,14 +162,34 @@ func StartMyMicroservice(ctx context.Context, addr string, ACLData string) error
 		grpc.StreamInterceptor(acl.checkStreamPermission),
 		grpc.InTapHandle(logger.SendEvent),
 	)
-
-	RegisterAdminServer(server, NewAdminService(ch))
+	as := NewAdminService(ch)
+	RegisterAdminServer(server, as)
 	RegisterBizServer(server, NewBizService())
+
+	quit := make(chan struct{})
+	as.Wg.Add(1)
+	go func(quit chan struct{}) {
+		for {
+			select {
+			case <-quit:
+				return
+			case event := <-as.Ch:
+				for _, srv := range as.OpenConnections {
+					err := srv.Send(event)
+					if err != nil {
+						fmt.Println("Server err:", err)
+					}
+				}
+			}
+		}
+	}(quit)
 
 	fmt.Println("starting server at :8082")
 	go server.Serve(lis)
+
 	go func() {
 		<-ctx.Done()
+		quit <- struct{}{}
 		server.Stop()
 	}()
 	return nil
