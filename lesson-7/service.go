@@ -224,7 +224,7 @@ func StartMyMicroservice(ctx context.Context, addr string, ACLData string) error
 	RegisterAdminServer(server, as)
 	RegisterBizServer(server, NewBizService())
 
-	// Middleware worker
+	// Middleware worker for logging
 	quit := make(chan struct{})
 	as.Wg.Add(1)
 	go func(quit chan struct{}) {
