@@ -42,8 +42,8 @@ func TestSimple(t *testing.T) {
 
 type Complex struct {
 	SubSimple  Simple
-	ManySimple []Simple
-	Blocks     []IDBlock
+	//ManySimple []Simple
+	//Blocks     []IDBlock
 }
 
 func TestComplex(t *testing.T) {
@@ -54,8 +54,8 @@ func TestComplex(t *testing.T) {
 	}
 	expected := &Complex{
 		SubSimple:  smpl,
-		ManySimple: []Simple{smpl, smpl},
-		Blocks:     []IDBlock{IDBlock{42}, IDBlock{42}},
+		//ManySimple: []Simple{smpl, smpl},
+		//Blocks:     []IDBlock{IDBlock{42}, IDBlock{42}},
 	}
 
 	jsonRaw, _ := json.Marshal(expected)

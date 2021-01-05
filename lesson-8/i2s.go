@@ -30,6 +30,10 @@ func validateParams(data interface{}, out interface{}) error {
 	return nil
 }
 
+func copySimple() error {
+	return nil
+}
+
 func i2s(data interface{}, out interface{}) error {
 	if err := validateParams(data, out); err != nil {
 		return err
@@ -53,11 +57,12 @@ func i2s(data interface{}, out interface{}) error {
 			sourceType := reflect.TypeOf(sourceVal).Kind()
 
 			if expectedType == reflect.Struct || expectedType == reflect.Slice {
-				// Как правильно передавать результирующий объект?
-				e := res.Field(i)
-				if err := i2s(sourceVal, &e); err != nil {
+				e := reflect.New(res.Field(i).Type()).Interface()
+				if err := i2s(sourceVal, e); err != nil {
 					return err
 				}
+				res.Field(i).Set(reflect.ValueOf(e).Elem())
+				continue
 			}
 
 			if expectedType == reflect.Int && sourceType == reflect.Float64 {
