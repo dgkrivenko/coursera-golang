@@ -42,8 +42,8 @@ func TestSimple(t *testing.T) {
 
 type Complex struct {
 	SubSimple  Simple
-	//ManySimple []Simple
-	//Blocks     []IDBlock
+	ManySimple []Simple
+	Blocks     []IDBlock
 }
 
 func TestComplex(t *testing.T) {
@@ -54,8 +54,8 @@ func TestComplex(t *testing.T) {
 	}
 	expected := &Complex{
 		SubSimple:  smpl,
-		//ManySimple: []Simple{smpl, smpl},
-		//Blocks:     []IDBlock{IDBlock{42}, IDBlock{42}},
+		ManySimple: []Simple{smpl, smpl},
+		Blocks:     []IDBlock{IDBlock{42}, IDBlock{42}},
 	}
 
 	jsonRaw, _ := json.Marshal(expected)
@@ -123,21 +123,21 @@ func TestErrors(t *testing.T) {
 			&Simple{},
 			`{"ID":42,"Username":100500,"Active":true}`,
 		},
-		//// "ManySimple":{} - ждём слайс, получаем структуру
-		//ErrorCase{
-		//	&Complex{},
-		//	`{"SubSimple":{"ID":42,"Username":"rvasily","Active":true},"ManySimple":{}}`,
-		//},
-		//// "SubSimple":true - ждём структуру, получаем bool
-		//ErrorCase{
-		//	&Complex{},
-		//	`{"SubSimple":true,"ManySimple":[{"ID":42,"Username":"rvasily","Active":true}]}`,
-		//},
-		//// ожидаем структуру - пришел массив
-		//ErrorCase{
-		//	&Simple{},
-		//	`[{"ID":42,"Username":"rvasily","Active":true}]`,
-		//},
+		// "ManySimple":{} - ждём слайс, получаем структуру
+		ErrorCase{
+			&Complex{},
+			`{"SubSimple":{"ID":42,"Username":"rvasily","Active":true},"ManySimple":{}}`,
+		},
+		// "SubSimple":true - ждём структуру, получаем bool
+		ErrorCase{
+			&Complex{},
+			`{"SubSimple":true,"ManySimple":[{"ID":42,"Username":"rvasily","Active":true}]}`,
+		},
+		// ожидаем структуру - пришел массив
+		ErrorCase{
+			&Simple{},
+			`[{"ID":42,"Username":"rvasily","Active":true}]`,
+		},
 		// Simple{} ( без амперсанта, т.е. структура, а не указатель на структуру )
 		// пришел не ссылочный тип - мы не сможем вернуть результат
 		ErrorCase{
